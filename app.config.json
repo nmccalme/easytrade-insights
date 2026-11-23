@@ -1,0 +1,44 @@
+{
+  "$schema": "./.dt-app/app.config.schema.json",
+  "environmentUrl": "https://pme94610.apps.dynatrace.com/",
+  "app": {
+    "name": "EasyTrade Insights",
+    "version": "0.2.0",
+    "description": "Service health, risks and observability recommendations for EasyTrade",
+    "id": "my.easytrade.insights",
+    "scopes": [
+      {
+        "name": "storage:logs:read",
+        "comment": "logs: level hygiene, slow SQL, error patterns"
+      },
+      {
+        "name": "storage:spans:read",
+        "comment": "traces: failures, latency, correlation"
+      },
+      {
+        "name": "storage:metrics:read",
+        "comment": "CPU throttling and usage"
+      },
+      {
+        "name": "storage:bizevents:read",
+        "comment": "recommendation lifecycle state written by the workflow"
+      },
+      {
+        "name": "storage:events:read",
+        "comment": "restarts, probe failures, deployment events"
+      },
+      {
+        "name": "storage:security.events:read",
+        "comment": "vulnerabilities with Davis exposure assessment"
+      },
+      {
+        "name": "storage:entities:read",
+        "comment": "service topology (calls / called_by)"
+      },
+      {
+        "name": "storage:buckets:read",
+        "comment": "default template"
+      }
+    ]
+  }
+}

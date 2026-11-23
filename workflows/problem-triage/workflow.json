@@ -1,0 +1,103 @@
+{
+  "title": "{{APP_TITLE}}: problem triage",
+  "description": "SCAFFOLD. When Davis opens a problem, gathers the evidence the Insights app shows (error logs in the app boundary) and sends a plain-language summary to the owning team. Not deployed by default.",
+  "isPrivate": false,
+  "trigger": {
+    "eventTrigger": {
+      "isActive": false,
+      "filterQuery": "event.kind == \"DAVIS_PROBLEM\" AND event.status == \"ACTIVE\" AND matchesValue(event.status_transition, {\"CREATED\", \"REOPENED\"}) AND matchesValue(event.category, {\"AVAILABILITY\", \"ERROR\", \"SLOWDOWN\", \"RESOURCE_CONTENTION\"})",
+      "uniqueExpression": "{{ event()[\"event.id\"] }}-{{ event()[\"dt.davis.last_reopen_timestamp\"] }}",
+      "triggerConfiguration": {
+        "type": "davis-problem",
+        "value": {
+          "categories": {
+            "info": false,
+            "error": true,
+            "custom": false,
+            "resource": true,
+            "slowdown": true,
+            "availability": true,
+            "monitoringUnavailable": false
+          },
+          "entityTags": {},
+          "analysisReady": false,
+          "onProblemClose": false,
+          "entityTagsMatch": "all",
+          "triggerOn": null,
+          "customFilter": "",
+          "severityThreshold": null,
+          "triggerOnUpdateFields": [],
+          "problemOpenDuration": null,
+          "maintenanceWindowTriggerBehavior": "always"
+        }
+      }
+    }
+  },
+  "tasks": {
+    "evidence": {
+      "name": "evidence",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Containers in the app boundary with errors right now",
+      "position": {
+        "x": 0,
+        "y": 1
+      },
+      "input": {
+        "query": "fetch logs, from:now()-30m\n| filter k8s.namespace.name==\"{{NAMESPACE}}\" and (loglevel==\"ERROR\" or loglevel==\"WARN\")\n| summarize errors=count(), sample=takeFirst(content), by:{container=k8s.container.name}\n| sort errors desc | limit 10"
+      }
+    },
+    "summarise": {
+      "name": "summarise",
+      "action": "dynatrace.automations:run-javascript",
+      "description": "Builds the plain-language summary. TODO: link to the Insights app with ?ns= and the affected service.",
+      "position": {
+        "x": 0,
+        "y": 2
+      },
+      "predecessors": [
+        "evidence"
+      ],
+      "conditions": {
+        "states": {
+          "evidence": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "script": "@file:triage.js"
+      }
+    },
+    "notify": {
+      "name": "notify",
+      "action": "dynatrace.email:send-email",
+      "description": "TODO: set recipients (or replace with Slack / ServiceNow / Jira). Disabled in the scaffold.",
+      "active": false,
+      "position": {
+        "x": 0,
+        "y": 3
+      },
+      "predecessors": [
+        "summarise"
+      ],
+      "conditions": {
+        "states": {
+          "summarise": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "to": {
+          "to": [
+            "{{NOTIFY_EMAIL}}"
+          ],
+          "cc": [],
+          "bcc": []
+        },
+        "subject": "{{ result(\"summarise\").subject }}",
+        "content": "{{ result(\"summarise\").body }}"
+      }
+    }
+  }
+}

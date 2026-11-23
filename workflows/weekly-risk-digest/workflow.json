@@ -1,0 +1,64 @@
+{
+  "title": "{{APP_TITLE}}: weekly risk digest",
+  "description": "SCAFFOLD. Every Monday, summarises open and newly resolved recommendations (from the lifecycle workflow) so owners see risks that are not urgent enough to page anyone. Not deployed by default.",
+  "isPrivate": false,
+  "trigger": {
+    "schedule": {
+      "isActive": false,
+      "isFaulty": false,
+      "trigger": {
+        "type": "cron",
+        "cron": "0 8 * * 1"
+      },
+      "rule": null,
+      "timezone": "UTC",
+      "filterParameters": {},
+      "inputs": {}
+    }
+  },
+  "tasks": {
+    "open_items": {
+      "name": "open_items",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Latest state of every tracked recommendation",
+      "position": {
+        "x": 0,
+        "y": 1
+      },
+      "input": {
+        "query": "fetch bizevents, from:now()-30d\n| filter event.type==\"easytrade.insights.recommendation\" and namespace==\"{{NAMESPACE}}\"\n| sort timestamp desc\n| summarize status=takeFirst(status), summary=takeFirst(summary), by:{container, rule}\n| sort status asc"
+      }
+    },
+    "notify": {
+      "name": "notify",
+      "action": "dynatrace.email:send-email",
+      "description": "TODO: set recipients. Disabled in the scaffold.",
+      "active": false,
+      "position": {
+        "x": 0,
+        "y": 2
+      },
+      "predecessors": [
+        "open_items"
+      ],
+      "conditions": {
+        "states": {
+          "open_items": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "to": {
+          "to": [
+            "{{NOTIFY_EMAIL}}"
+          ],
+          "cc": [],
+          "bcc": []
+        },
+        "subject": "[{{NAMESPACE}}] Weekly observability and risk digest",
+        "content": "{% for r in result(\"open_items\").records %}{{ r.status }}: {{ r.container }} - {{ r.summary }}\n{% endfor %}"
+      }
+    }
+  }
+}

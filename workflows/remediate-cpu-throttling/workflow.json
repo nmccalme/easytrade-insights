@@ -1,0 +1,151 @@
+{
+  "title": "{{APP_TITLE}}: remediate CPU throttling (approval required)",
+  "description": "SCAFFOLD. Fires when the lifecycle workflow opens a cpu-throttled recommendation. Plans a higher CPU limit from observed demand, asks a human to approve, applies it through the Kubernetes Connector, then checks whether throttling dropped. The approve, apply and verify steps are inactive until a connection and approvers are configured; with them inactive a run only produces a plan.",
+  "isPrivate": false,
+  "trigger": {
+    "eventTrigger": {
+      "isActive": false,
+      "filterQuery": "event.type == \"easytrade.insights.recommendation\" AND rule == \"cpu-throttled\" AND status == \"NEW\" AND namespace == \"{{NAMESPACE}}\"",
+      "uniqueExpression": "{{ event()[\"event.id\"] }}",
+      "triggerConfiguration": {
+        "type": "event",
+        "value": {
+          "query": "event.type == \"easytrade.insights.recommendation\" AND rule == \"cpu-throttled\" AND status == \"NEW\" AND namespace == \"{{NAMESPACE}}\"",
+          "eventType": "bizevents"
+        }
+      }
+    }
+  },
+  "tasks": {
+    "target": {
+      "name": "target",
+      "action": "dynatrace.automations:run-javascript",
+      "description": "Reads the container from the trigger event, or from the `container` run parameter for a manual run",
+      "position": {
+        "x": 0,
+        "y": 1
+      },
+      "input": {
+        "script": "@file:target.js"
+      }
+    },
+    "demand": {
+      "name": "demand",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Current CPU limit, and observed demand (usage + throttled time) over 6 hours, for the container named in the trigger event (or the `container` run parameter)",
+      "position": {
+        "x": 0,
+        "y": 2
+      },
+      "input": {
+        "query": "timeseries { use=avg(dt.kubernetes.container.cpu_usage), thr=avg(dt.kubernetes.container.cpu_throttled), lim=avg(dt.kubernetes.container.limits_cpu) },\n  by:{k8s.container.name, k8s.namespace.name, k8s.workload.name}, from:now()-6h, interval:5m\n| filter k8s.namespace.name==\"{{NAMESPACE}}\" and k8s.container.name==\"{{ result('target').container }}\"\n| fieldsAdd demand=use[] + thr[]\n| fields container=k8s.container.name, workload=k8s.workload.name, limit=arrayAvg(lim), demandP95=arrayPercentile(demand, 95), demandMax=arrayMax(demand), throttledAvg=arrayAvg(thr)"
+      },
+      "predecessors": [
+        "target"
+      ],
+      "conditions": {
+        "states": {
+          "target": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      }
+    },
+    "plan": {
+      "name": "plan",
+      "action": "dynatrace.automations:run-javascript",
+      "description": "Proposes a new CPU limit with guard rails: never more than double the current limit in one step, rounded to 50 millicores. Returns `proposal: null` when no change is justified.",
+      "position": {
+        "x": 0,
+        "y": 3
+      },
+      "predecessors": [
+        "demand"
+      ],
+      "conditions": {
+        "states": {
+          "demand": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "script": "@file:plan.js"
+      }
+    },
+    "approve": {
+      "name": "approve",
+      "action": "dynatrace.automations:request-approval",
+      "description": "TODO: choose approvers (users or groups). Declined or timed-out approvals fail the workflow, so nothing is applied.",
+      "active": false,
+      "position": {
+        "x": 0,
+        "y": 4
+      },
+      "predecessors": [
+        "plan"
+      ],
+      "conditions": {
+        "states": {
+          "plan": "OK"
+        },
+        "custom": "{{ result(\"plan\").proposal != None }}",
+        "else": "STOP"
+      },
+      "input": {
+        "message": "{{ result(\"plan\").summary }}",
+        "approvers": []
+      }
+    },
+    "apply": {
+      "name": "apply",
+      "action": "dynatrace.kubernetes.connector:patch-resource",
+      "description": "TODO: select the Kubernetes connection and VERIFY the action id in the Workflows UI. Patches the workload's container CPU limit to the approved value. This is the only step that changes production.",
+      "active": false,
+      "position": {
+        "x": 0,
+        "y": 5
+      },
+      "predecessors": [
+        "approve"
+      ],
+      "conditions": {
+        "states": {
+          "approve": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "namespace": "{{NAMESPACE}}",
+        "kind": "Deployment",
+        "name": "{{ result(\"plan\").proposal.workload }}",
+        "patch": "{{ result(\"plan\").proposal.patch }}"
+      }
+    },
+    "verify": {
+      "name": "verify",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Throttling 15 minutes after the change, to confirm it helped",
+      "active": false,
+      "waitBefore": 900,
+      "position": {
+        "x": 0,
+        "y": 6
+      },
+      "predecessors": [
+        "apply"
+      ],
+      "conditions": {
+        "states": {
+          "apply": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "query": "timeseries { thr=avg(dt.kubernetes.container.cpu_throttled), use=avg(dt.kubernetes.container.cpu_usage) }, by:{k8s.container.name, k8s.namespace.name}, from:now()-15m, interval:5m\n| filter k8s.namespace.name==\"{{NAMESPACE}}\" and k8s.container.name==\"{{ result('plan').proposal.container }}\"\n| fieldsAdd t=arrayAvg(thr), u=arrayAvg(use)\n| fields container=k8s.container.name, throttlePct=round(if(t+u>0, t/(t+u)*100, else:0.0), decimals:1)"
+      }
+    }
+  }
+}

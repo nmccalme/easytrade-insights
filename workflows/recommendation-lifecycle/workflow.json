@@ -1,0 +1,83 @@
+{
+  "title": "{{APP_TITLE}}: recommendation lifecycle",
+  "description": "Every 15 min: snapshots log and CPU-throttling signals for the easytrade namespace, asks Davis (auto-adaptive anomaly detection) to confirm throttling, then opens new recommendations and resolves ones that stayed clean for two runs. State is stored as business events (easytrade.insights.recommendation) that the EasyTrade Insights app reads.",
+  "isPrivate": false,
+  "trigger": {
+    "schedule": {
+      "isActive": true,
+      "isFaulty": false,
+      "trigger": {
+        "type": "interval",
+        "intervalMinutes": 15
+      },
+      "rule": null,
+      "timezone": "UTC",
+      "filterParameters": {},
+      "inputs": {}
+    }
+  },
+  "tasks": {
+    "throttle": {
+      "name": "throttle",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "CPU throttling % per container, last hour",
+      "position": {
+        "x": -1,
+        "y": 1
+      },
+      "input": {
+        "query": "timeseries {thr=sum(dt.kubernetes.container.cpu_throttled), used=sum(dt.kubernetes.container.cpu_usage)}, by:{k8s.container.name}, filter:k8s.namespace.name==\"{{NAMESPACE}}\", from:now()-1h, interval:1h\n| fieldsAdd t=arraySum(thr), u=arraySum(used)\n| fields container=k8s.container.name, throttlePct=round(if(t+u>0, t/(t+u)*100, else:0.0), decimals:1)"
+      }
+    },
+    "logs": {
+      "name": "logs",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Log level hygiene per container, last hour",
+      "position": {
+        "x": 0,
+        "y": 1
+      },
+      "input": {
+        "query": "fetch logs, from:now()-1h\n| filter k8s.namespace.name==\"{{NAMESPACE}}\"\n| summarize logs=count(), noLevel=countIf(isNull(loglevel) or loglevel==\"NONE\"), info=countIf(loglevel==\"INFO\"), by:{container=k8s.container.name}\n| fieldsAdd noLevelPct=round(noLevel*100.0/logs, decimals:1), infoPct=round(info*100.0/logs, decimals:1)\n| fields container, logs, noLevelPct, infoPct"
+      }
+    },
+    "previous": {
+      "name": "previous",
+      "action": "dynatrace.automations:execute-dql-query",
+      "description": "Latest recorded state of every recommendation",
+      "position": {
+        "x": 1,
+        "y": 1
+      },
+      "input": {
+        "query": "fetch bizevents, from:now()-30d\n| filter event.type==\"easytrade.insights.recommendation\" and namespace==\"{{NAMESPACE}}\"\n| sort timestamp desc\n| summarize status=takeFirst(status), cleanRuns=takeFirst(cleanRuns), davis=takeFirst(davis), by:{container, rule}"
+      }
+    },
+    "reconcile": {
+      "name": "reconcile",
+      "action": "dynatrace.automations:run-javascript",
+      "description": "Davis confirmation, open / resolve logic, writes state events",
+      "position": {
+        "x": 0,
+        "y": 2
+      },
+      "predecessors": [
+        "throttle",
+        "logs",
+        "previous"
+      ],
+      "conditions": {
+        "states": {
+          "throttle": "OK",
+          "logs": "OK",
+          "previous": "OK"
+        },
+        "custom": "",
+        "else": "STOP"
+      },
+      "input": {
+        "script": "@file:reconcile.js"
+      }
+    }
+  }
+}

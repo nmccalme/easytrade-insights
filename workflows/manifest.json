@@ -1,0 +1,29 @@
+{
+  "variables": {
+    "NAMESPACE": "easytrade",
+    "APP_TITLE": "EasyTrade Insights",
+    "NOTIFY_EMAIL": "team@example.com"
+  },
+  "workflows": [
+    {
+      "dir": "recommendation-lifecycle",
+      "status": "ready"
+    },
+    {
+      "dir": "problem-triage",
+      "status": "scaffold"
+    },
+    {
+      "dir": "weekly-risk-digest",
+      "status": "scaffold"
+    },
+    {
+      "dir": "remediate-cpu-throttling",
+      "status": "scaffold"
+    },
+    {
+      "dir": "remediate-unstable-pods",
+      "status": "scaffold"
+    }
+  ]
+}
